@@ -126,9 +126,9 @@ int FND(int* score) {
     unsigned short data[3];
     static int n = 0;
 
-    data[0] = (seg_num[score[0]] << 4) | D1;
-    data[2] = (seg_dot           << 4) | D3;
-    data[1] = (seg_num[score[1]] << 4) | D4;
+    data[0] = (~seg_num[score[0]] << 4) | D1;
+    data[2] = (~seg_dot           << 4) | D3;
+    data[1] = (~seg_num[score[1]] << 4) | D4;
 
     write(dev_fnd, &data[n], 2);
     n++;
@@ -137,7 +137,9 @@ int FND(int* score) {
 
 
 ////////////////////// Servo Motor //////////////////////
-
+int Motor(char dir){
+    write(dev_motor, &dir, 1);
+}
 
 
 ////////////////////// main //////////////////////
@@ -183,18 +185,18 @@ int main(void) {
                         
             Motor(0); //TODO: motor
 
-            usr_dir0 = //FIXME: ÀÌ¿ëÀÚ ¾ó±¼°¢µµ ÀÐ¾î¿À±â
+            usr_dir0 = //FIXME: ì´ìš©ìž ì–¼êµ´ê°ë„ ì½ì–´ì˜¤ê¸°
             rpi_dir = myRand(); //is current system clock count odd? or even?
 
         } else if (!isTimePassed_us(&time_ref, 1400000)) { // ~1.4s
 
             Motor(rpi_dir); //TODO: motor
 
-            usr_dir1 = //FIXME: ÀÌ¿ëÀÚ ¾ó±¼°¢µµ ÀÐ¾î¿À±â
+            usr_dir1 = //FIXME: ì´ìš©ìž ì–¼êµ´ê°ë„ ì½ì–´ì˜¤ê¸°
 
         } else if (!isTimePassed_us(&time_ref, 3100000)) { // ~3.1s
             
-            usr_dir = (usr_dir0 - usr_dir1); //FIXME: ÀÌ¿ëÀÚ °áÁ¤ ÆÇº°ÇÏ±â
+            usr_dir = (usr_dir0 - usr_dir1); //FIXME: ì´ìš©ìž ê²°ì • íŒë³„í•˜ê¸°
             stage_result = Compare(rpi_dir, usr_dir);
                 
             if (stage_result == 1) playBuzzer('b');  // win (user side)
