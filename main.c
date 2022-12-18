@@ -145,9 +145,9 @@ int FND(int* score) {
     unsigned short data[3];
     static int n = 0;
 
-    data[0] = (seg_num[score[0]] << 4) | D1;
-    data[2] = (seg_dot           << 4) | D3;
-    data[1] = (seg_num[score[1]] << 4) | D4;
+    data[0] = (~seg_num[score[0]] << 4) | D1;
+    data[2] = (~seg_dot           << 4) | D3;
+    data[1] = (~seg_num[score[1]] << 4) | D4;
 
     write(dev_fnd, &data[n], 2);
     n++;
@@ -156,7 +156,14 @@ int FND(int* score) {
 
 
 ////////////////////// Servo Motor //////////////////////
-
+int Motor(int result){
+    char dir = '0';
+    if (result < 0)          dir = '0'; // Turn Left
+    else if (result > 0)     dir = '2'; // Turn Right
+    else                     dir = '1'; // Center
+        
+    dev(dev_motor, &dir, 1);
+}
 
 
 ////////////////////// main //////////////////////
@@ -192,7 +199,8 @@ int main(void) {
     int stage_result = 1;
     int rpi_dir, usr_dir, usr_dir0, usr_dir1;
     time_ref = NOW();
-    //TODO: init motor to 0.
+    
+    Motor(0);
 #ifdef DEBUG
     int current = 0;
 #endif
@@ -214,6 +222,7 @@ int main(void) {
             playBuzzer('a'); //cham cham cham! (only once)
             rpi_dir = myRand(); //is current system clock count odd? or even?
             //TODO: motor set to 0 (only once)
+            Motor(0);
             //FIXME: get user face direction0.
 
 
@@ -225,6 +234,7 @@ int main(void) {
             if (current != 2) {printf("Stage 2 : rpi_dir = %d, usr_dir0 = \n", rpi_dir); current = 2;}
 #endif
             //TODO: motor set to dir_rpi (only once)
+            Motor(rpi_dir);
             //FIXME: get user face direction1.
 
 
