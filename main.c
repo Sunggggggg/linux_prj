@@ -131,7 +131,7 @@ void updateButton() {
                 toggle_button_state = !toggle_button_state;
             }
         }
-		}
+    }
     last_button_state = buff; // last_button_state will follow the signal(pressed or noise).
 }
 
