@@ -4,6 +4,35 @@
 #include <fcntl.h>
 #include <time.h> // need -lrt option. means to use the real-time library
 
+/****** AI ******/
+#include <vector>
+#include <iostream>
+#include <fstream>
+
+#include <opencv2/opencv.hpp>
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/objdetect/objdetect.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/videoio.hpp>
+#include <opencv2/photo.hpp>
+
+#include "ldmarkmodel.h"
+
+using namespace std;
+using namespace cv;
+
+#define head_pose_eav0      0
+#define head_pose_eav1      1
+#define head_pose_eav_off0  2
+#define head_pose_eav_off1  3
+
+#define HEAD_CENTER         2
+#define HEAD_LEFT           0
+#define HEAD_RIGHT          1
+
+/****************/
+
 //#define DEBUG_R
 #define DEBUG
 #define DEBUG_BTN
@@ -13,13 +42,11 @@
 #define SERVIVAL        0  // do just three rounds
 #define USER        0  // score index
 #define RASPI       1
-#define LED_OFF         2
-#define LED_WIN         1
-#define LED_LOSE        0
-#define SEC2nSEC    1000000000
-#define SEC2uSEC    1000000
 
 ////////////////////// clock timer //////////////////////
+
+#define SEC2nSEC    1000000000
+#define SEC2uSEC    1000000
 
 typedef struct timespec Pitime;
 Pitime gettime_now;
@@ -32,13 +59,13 @@ int timePassed_us(Pitime* ref) {
     int time_passed_nsec;
     int time_passed_sec;
     int underflow;
-
+    
     // 1s = 1,000,000us, 1us = 1,000ns
     clock_gettime(CLOCK_REALTIME, &gettime_now);
-    time_passed_nsec = gettime_now.tv_nsec - ref->tv_nsec;
+    time_passed_nsec  = gettime_now.tv_nsec - ref->tv_nsec;
     underflow = time_passed_nsec < 0 ? 1 : 0;
     if (underflow) time_passed_nsec += 1 * SEC2nSEC;
-    time_passed_sec = gettime_now.tv_sec - ref->tv_sec - underflow;
+    time_passed_sec   = gettime_now.tv_sec  - ref->tv_sec - underflow;
 #ifdef DEBUG_TIME
     if (time_passed_sec < 0) printf("timePassed_us : !\n");
 #endif
@@ -76,44 +103,47 @@ void closeAllDev();
 
 ////////////////////// GPIO //////////////////////
 
+#define LED_OFF         2
+#define LED_WIN         1
+#define LED_LOSE        0
+
 int toggle_button_state = 0;
 
 // update toggle button signal w/ signal debouncing
-void buttonUpdate() {
+void updateButton() {
     const  int      debounce_time_us = 40;
-    char     buff;
+           char     buff;
     static char     last_button_state = '0';
     static char     curr_button_state = '0';
-    static Pitime   last_pushed = { 0 };
+    static Pitime   last_pushed = {0};
 
     read(dev_gpio, &buff, 1); // read pin 6
 
     if (buff != last_button_state) // if the button signal detected(pressed or noise),
-        last_pushed = NOW();
-    if (timePassed_us(&last_pushed) > debounce_time_us) // count the time a little
+        last_pushed = NOW();         
+    if (timePassed_us(&last_pushed) > debounce_time_us){ // count the time a little
         if (buff != curr_button_state) { // if the button signal is still changed
             curr_button_state = buff;
             if (curr_button_state == '1') {
 #ifdef DEBUG_TIME
-                printf("buttonUpdate : pressed\n");
+                printf("updateButton : pressed\n");
 #endif
                 toggle_button_state = !toggle_button_state;
             }
         }
+		}
     last_button_state = buff; // last_button_state will follow the signal(pressed or noise).
 }
 
 void writeLED(const int winflag) {
-    static int prev_winflag = '0';
+    static int prev_winflag = 0;
     if (prev_winflag == winflag) return;
 
     char buff;
-    if (winflag == LED_WIN)
-        buff = '1'; // blue LED
-    else if (winflag == LED_OFF)
-        buff = '2'; // turn all LED off
-    else // (winflag == LED_LOSE)
-        buff = '0'; // red LED
+    if      (winflag == LED_WIN)    buff = '1'; // blue LED
+    else if (winflag == LED_OFF)    buff = '2'; // turn all LED off
+    else  /*(winflag == LED_LOSE)*/ buff = '0'; // red LED
+
     write(dev_gpio, &buff, 1);
 
     prev_winflag = winflag;
@@ -138,35 +168,40 @@ void playBuzzer(char song) {
 #define D2 0x02
 #define D3 0x04
 #define D4 0x08
-
-const char seg_num[10] = { 0xc0, 0xf9, 0xa4, 0xb0, 0x99, 0x92, 0x82, 0xd8, 0x80, 0x90 };
+char seg_num[10] = {0xc0, 0xf9, 0xa4, 0xb0, 0x99, 0x92, 0x82, 0xd8, 0x80, 0x90};
 const char seg_dot = 0x7f;
-int FND(int* score) {
+
+int FND(int* score) { //TODO: FND in trouble
     unsigned short data[3];
     static int n = 0;
 
-    data[0] = (~seg_num[score[0]] << 4) | D1;
-    data[2] = (~seg_dot << 4) | D3;
-    data[1] = (~seg_num[score[1]] << 4) | D4;
+    data[0] = (seg_num[score[USER ]] << 4) | D1;
+    data[1] = (seg_num[score[RASPI]] << 4) | D4;
+    data[2] = (seg_dot               << 4) | D3;
 
     write(dev_fnd, &data[n], 2);
-    n++;
-    n = (n + 1) % 2;
+    n = (n + 1) % 3;
 }
 
 
 ////////////////////// Servo Motor //////////////////////
-#define CENTER  5
-#define LEFT    0
-#define RIGHT   1
 
-int Motor(int result) {
-    char dir = '0';
-    if (result == LEFT)         dir = '0'; // Turn Left
-    else if (result == RIGHT)   dir = '2'; // Turn Right
-    else if (result == CENTER)  dir = '1'; // Center
+#define MTR_CENT        2
+#define MTR_LEFT        0
+#define MTR_RIGT        1
 
-    write(dev_motor, &dir, 1);
+void setMotor(int motor_dir){
+    static int prev_dir = 3;
+    if (prev_dir == motor_dir) return;
+
+    char buff = '0';
+    if      (motor_dir == MTR_LEFT)     buff = '0'; // Turn Left
+    else if (motor_dir == MTR_RIGT)     buff = '2'; // Turn Right
+    else  /*(motor_dir == MTR_CENT)*/   buff = '1'; // Center
+
+    write(dev_svmt, &buff, 1);
+
+    prev_dir = motor_dir;
 }
 
 
@@ -175,17 +210,44 @@ int Motor(int result) {
 int main(void) {
     Pitime time_ref;
 
+    // AI Dataset Open && Camera open
+    ldmarkmodel modelt;
+    std::string modelFilePath = "roboman-landmark-model.bin";
+
+    while (!load_ldmarkmodel(modelFilePath, modelt)) {
+        std::cout << "load_ldmarkmodel error." << std::endl;
+        std::cin >> modelFilePath;
+    }
+
+    cv::VideoCapture mCamera;
+
+    mCamera.open("/dev/video0", CAP_V4L2); // ***
+    if (!mCamera.isOpened()) {
+        printf("Can`t open Camera\n");
+        return -1;
+    }    
+
+    // For Face Detection && Face Landmark Point
+    cv::Mat Image;
+    cv::Mat current_shape;
+
+    int eav_status;
+    int head_pose_0, head_pose_1;
+    int head_dir;
+    
     // open character devices
     int opn_err = openAllDev();
     if (opn_err & ERR_OPN_GPIO) goto CDevOpenFatal;
+    
 
     // wait for the start button pressed (behave as toggle)
-    do { buttonUpdate(); } while (!toggle_button_state);
+    do { updateButton(); } 
+    while (!toggle_button_state);
 
     // game started. wait 2sec...
     int game_mode = SERVIVAL;
     time_ref = NOW();
-    while (timePassed_us(&time_ref) < (2 * SEC2uSEC)) buttonUpdate();
+    while (timePassed_us(&time_ref) < (2 * SEC2uSEC)) updateButton();
     if (toggle_button_state == 0) {
         toggle_button_state = 1;
         game_mode = DEATH_MATCH;
@@ -201,82 +263,105 @@ int main(void) {
     int stage_result = 1;
     int rpi_dir, usr_dir, usr_dir0, usr_dir1;
     time_ref = NOW();
-
-    Motor(CENTER);
+    setMotor(MTR_CENT);
 #ifdef DEBUG
     int current = 0;
 #endif
 
     while (toggle_button_state) {
-        // Face Detecting...
 
         FND(score);
-        buttonUpdate();
+        updateButton();
         passed_time_from_ref = timePassed_us(&time_ref);
 
+        // Face Detection && Landmark Point Traking
+        mCamera.read(Image);
+        if (Image.empty()) break;
+
+        modelt.track(Image, current_shape);
+        cv::Vec3d eav;
+        eav_status = head_pose_eav0;
+
         //************* switch(passed_time) *************//
-        if (passed_time_from_ref < (0.7 * SEC2uSEC)) {
+        if (passed_time_from_ref < (0.7 * SEC2uSEC)){ 
 
 
 #ifdef DEBUG
-            if (current != 1) { printf("Stage 1\n"); current = 1; }
+            if (current != 1) {printf("Stage 1\n"); current = 1;}
 #endif
             playBuzzer('a'); //cham cham cham! (only once)
             rpi_dir = myRand(); //is current system clock count odd? or even?
-            Motor(CENTER);  //TODO: motor set to 0 (only once)
-            //FIXME: get user face direction0.
+            setMotor(MTR_CENT);
+            //FIXME: get user head pose 0.
 
 
             //////////////    ~0.7s    //////////////
-        }
-        else if (passed_time_from_ref < (1.4 * SEC2uSEC)) {
+        } else if (passed_time_from_ref < (1.4 * SEC2uSEC)) { 
+            if(eav_status == head_pose_eav0) {
+                modelt.EstimateHeadPose(current_shape, eav);
+                head_pose_0 = eav[1];
+                eav_status = head_pose_eav1;
+            }
 
 
 #ifdef DEBUG
-            if (current != 2) { printf("Stage 2 : rpi_dir = %d, usr_dir0 = \n", rpi_dir); current = 2; }
+            if (current != 2) {printf("Stage 2 : rpi_dir = %d, usr_dir0 = \n", rpi_dir); current = 2;}
 #endif
-            Motor(rpi_dir); //TODO: motor set to dir_rpi (only once)
-            //FIXME: get user face direction1.
+            if (passed_time_from_ref < (1.12 * SEC2uSEC)) 
+                setMotor(rpi_dir);
+            //FIXME: get user head pose 1.
 
 
             //////////////    ~1.4s    //////////////
-        }
-        else if (passed_time_from_ref < (4.1 * SEC2uSEC)) {
-
+        } else if (passed_time_from_ref < (4.1 * SEC2uSEC)) {
+            if(eav_status == head_pose_eav1) {
+                modelt.EstimateHeadPose(current_shape, eav);
+                head_pose_1 = eav[1];
+                eav_status = head_pose_eav_off0;                
+            }
+            
 
 #ifdef DEBUG
-            if (current != 3) { printf("Stage 3 : usr_dir1 = \n"); current = 3; }
+            if (current != 3) {printf("Stage 3 : usr_dir1 = \n"); current = 3;}
 #endif
-            //FIXME: is_result_computed
-            if (stage_result == 1) {  // win (user side) 
-                playBuzzer('b');
-                writeLED(LED_WIN);
-            }
-            else { //stage_result == 0   lose
-                playBuzzer('c');
-                writeLED(LED_LOSE);
+            if(eav_status == head_pose_eav_off1) {
+                //FIXME: is_result_computed
+                if (stage_result == 1) {  // win (user side) 
+                    playBuzzer('b');
+                    writeLED(LED_WIN);
+                }
+                else { //stage_result == 0   lose
+                    playBuzzer('c');
+                    writeLED(LED_LOSE);
+                }
             }
             //FIXME: compute user's decision and update the result.
+            else { // if(eav_status == head_pose_eav_off0)  
+                if((head_pose_0 - head_pose_1) < 0) head_dir = HEAD_RIGHT;
+                else head_dir = HEAD_LEFT;
 
+                if(rpi_dir == head_dir) stage_result = 0; // rip win
+                else stage_result = 1; // usr win
+
+                eav_status = head_pose_eav_off1;
+            }
 
             //////////////    ~4.1s    //////////////
-        }
-        else {
+        } else {
             ////////////// after 4.1s  //////////////
 
 
 #ifdef DEBUG
-            if (current != 4) { printf("Stage 4\n"); current = 4; }
+            if (current != 4) {printf("Stage 4\n"); current = 4;}
 #endif  
             writeLED(LED_OFF);
             if (stage_result == 1) score[RASPI]--; // win (user side)
-            else                   score[USER]--; // lose
+            else                   score[USER ]--; // lose
 
             if ((--stage_count >= 0) && (score[RASPI] && score[USER])) {
                 // if the game isn't over
                 time_ref = NOW();
-            }
-            else { // if the game is over.
+            } else { // if the game is over.
                 if (score[USER] >= score[RASPI])
                     playBuzzer('d'); // user won  this game
                 else
@@ -289,6 +374,7 @@ int main(void) {
     time_ref = NOW();
     while (timePassed_us(&time_ref) < (2 * SEC2uSEC));
     writeLED(LED_OFF);
+    setMotor(MTR_CENT);
 
 CDevOpenFatal:
     closeAllDev();
@@ -331,7 +417,7 @@ void closeAllDev() {
         &dev_gpio,
         &dev_fnd
     };
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < 4; i++) 
         if (*cdevs[i] > 0)
             close(*cdevs[i]);
 }
